@@ -33,32 +33,67 @@ let dynamicMemory = [];
 // The main interceptor function
 globalThis.dynamicMemoryInterceptor = async function(chat, contextSize, abort, type) {
     const settings = getSettings();
-
-    if (!settings.enabled) {
+    if (!settings.enabled || chat.length < 3) { // Don't run on very short chats
         return;
     }
 
     console.log('Dynamic Memory Interceptor triggered');
 
-    // 1. Paginate the chat history
-    const pages = paginate(chat, settings.pageSize);
+    // 1. Find initial system messages to preserve them
+    let chatStartIndex = 0;
+    for (let i = 0; i < chat.length; i++) {
+        // Find the first message that is from the user or the character
+        if (chat[i].is_user || (!chat[i].is_system && chat[i].name !== 'System')) {
+            chatStartIndex = i;
+            break;
+        }
+        // If we loop through the whole chat and it's all system messages, do nothing.
+        if (i === chat.length - 1) {
+            return;
+        }
+    }
+    const initialSystemMessages = chat.slice(0, chatStartIndex);
+    const workableChat = chat.slice(chatStartIndex);
 
-    // 2. Get the present situation
-    const presentSituation = getPresentSituation(chat, settings.presentSituationSize);
 
-    // 3. Summarize each page
+    // 2. Find the split point in the workable chat between "history" and "present"
+    let presentSituationCharCount = 0;
+    let splitIndex = workableChat.length;
+    // Iterate from the last message backwards
+    for (let i = workableChat.length - 1; i >= 0; i--) {
+        const message = workableChat[i];
+        const messageText = `${message.name}: ${message.mes}\n`;
+        if (presentSituationCharCount + messageText.length > settings.presentSituationSize) {
+            // We've collected enough for the present, the rest is history
+            break;
+        }
+        presentSituationCharCount += messageText.length;
+        splitIndex = i;
+    }
+
+    const historyToSummarize = workableChat.slice(0, splitIndex);
+    const presentChat = workableChat.slice(splitIndex);
+
+    if (historyToSummarize.length === 0) {
+        console.log('Dynamic Memory: No history to summarize.');
+        return; // Not enough history to summarize
+    }
+
+    // 3. Paginate and summarize the history
+    const pages = paginate(historyToSummarize, settings.pageSize);
+    const presentSituationText = presentChat.map(m => `${m.name}: ${m.mes}`).join('\n');
+
     const summarizedPages = [];
     for (const page of pages) {
-        const summary = await summarizePage(page, presentSituation, settings);
+        const summary = await summarizePage(page, presentSituationText, settings);
         if (summary) {
             summarizedPages.push(summary);
         }
     }
 
-    // 4. Store the dynamic memory
     dynamicMemory = summarizedPages;
 
-    // 5. Inject the dynamic memory into the chat
+    // 4. Reconstruct the chat array if we have a summary
     if (dynamicMemory.length > 0) {
         const memoryString = dynamicMemory.join('\n');
         const memoryMessage = {
@@ -66,9 +101,15 @@ globalThis.dynamicMemoryInterceptor = async function(chat, contextSize, abort, t
             name: "System",
             is_system: true,
             send_date: Date.now(),
-            mes: `[Dynamic Memory]\n${memoryString}`
+            mes: `[The following is a summarized history of past events, used for context]\n${memoryString}`
         };
-        chat.splice(chat.length - 1, 0, memoryMessage);
+
+        // Modify the chat array in-place
+        chat.length = 0;
+        chat.push(...initialSystemMessages);
+        chat.push(memoryMessage);
+        chat.push(...presentChat);
+        console.log('Dynamic Memory: Chat context reconstructed with summary.');
     }
 };
 
@@ -103,18 +144,6 @@ function paginate(chat, pageSize) {
     return pages;
 }
 
-function getPresentSituation(chat, presentSituationSize) {
-    let presentSituation = '';
-    for (let i = chat.length - 1; i >= 0; i--) {
-        const message = chat[i];
-        const messageText = `${message.name}: ${message.mes}\n`;
-        if (presentSituation.length + messageText.length > presentSituationSize) {
-            break;
-        }
-        presentSituation = messageText + presentSituation;
-    }
-    return presentSituation;
-}
 
 async function summarizePage(page, presentSituation, settings) {
     const { apiUrl, apiKey, summarizeModel } = settings;
