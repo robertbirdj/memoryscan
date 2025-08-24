@@ -1,0 +1,31 @@
+/* Dynamic Memory Extension Styles */
+
+.dynamic-memory-settings {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.dynamic-memory-settings h2 {
+    margin-top: 0;
+}
+
+.dynamic-memory-settings label {
+    font-weight: bold;
+}
+
+.dynamic-memory-settings input[type="text"],
+.dynamic-memory-settings input[type="number"],
+.dynamic-memory-settings input[type="password"] {
+    width: 100%;
+    padding: 5px;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+}
+
+#dm-memory-view {
+    border: 1px solid #ccc;
+    padding: 10px;
+    min-height: 100px;
+    background-color: #f0f0f0;
+}

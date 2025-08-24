@@ -1,0 +1,10 @@
+{
+    "name": "Dynamic Memory",
+    "display_name": "Dynamic Memory",
+    "author": "Jules",
+    "version": "1.0.0",
+    "description": "Summarizes the story and injects it into the context.",
+    "js": "index.js",
+    "css": "style.css",
+    "generate_interceptor": "dynamicMemoryInterceptor"
+}

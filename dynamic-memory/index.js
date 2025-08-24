@@ -1,0 +1,243 @@
+// SillyTavern Dynamic Memory Extension
+// by Jules
+
+const { extensionSettings, saveSettingsDebounced, getContext, eventSource, event_types } = SillyTavern.getContext();
+
+const MODULE_NAME = 'dynamic-memory';
+
+const defaultSettings = Object.freeze({
+    enabled: true,
+    pageSize: 2000,
+    presentSituationSize: 1000,
+    apiUrl: 'https://openrouter.ai/api/v1/chat/completions',
+    apiKey: '',
+    summarizeModel: 'openai/gpt-3.5-turbo',
+});
+
+function getSettings() {
+    if (!extensionSettings[MODULE_NAME]) {
+        extensionSettings[MODULE_NAME] = structuredClone(defaultSettings);
+    }
+
+    for (const key of Object.keys(defaultSettings)) {
+        if (!Object.hasOwn(extensionSettings[MODULE_NAME], key)) {
+            extensionSettings[MODULE_NAME][key] = defaultSettings[key];
+        }
+    }
+
+    return extensionSettings[MODULE_NAME];
+}
+
+let dynamicMemory = [];
+
+// The main interceptor function
+globalThis.dynamicMemoryInterceptor = async function(chat, contextSize, abort, type) {
+    const settings = getSettings();
+
+    if (!settings.enabled) {
+        return;
+    }
+
+    console.log('Dynamic Memory Interceptor triggered');
+
+    // 1. Paginate the chat history
+    const pages = paginate(chat, settings.pageSize);
+
+    // 2. Get the present situation
+    const presentSituation = getPresentSituation(chat, settings.presentSituationSize);
+
+    // 3. Summarize each page
+    const summarizedPages = [];
+    for (const page of pages) {
+        const summary = await summarizePage(page, presentSituation, settings);
+        if (summary) {
+            summarizedPages.push(summary);
+        }
+    }
+
+    // 4. Store the dynamic memory
+    dynamicMemory = summarizedPages;
+
+    // 5. Inject the dynamic memory into the chat
+    if (dynamicMemory.length > 0) {
+        const memoryString = dynamicMemory.join('\n');
+        const memoryMessage = {
+            is_user: false,
+            name: "System",
+            is_system: true,
+            send_date: Date.now(),
+            mes: `[Dynamic Memory]\n${memoryString}`
+        };
+        chat.splice(chat.length - 1, 0, memoryMessage);
+    }
+};
+
+function paginate(chat, pageSize) {
+    const pages = [];
+    let currentPage = '';
+    let currentSize = 0;
+
+    for (const message of chat) {
+        const messageText = `${message.name}: ${message.mes}\n`;
+
+        if (currentSize + messageText.length > pageSize && currentSize > 0) {
+            // Try to find a newline to split on
+            let splitIndex = currentPage.lastIndexOf('\n');
+            if (splitIndex === -1) {
+                splitIndex = pageSize;
+            }
+
+            pages.push(currentPage.substring(0, splitIndex));
+            currentPage = currentPage.substring(splitIndex + 1);
+            currentSize = currentPage.length;
+        }
+
+        currentPage += messageText;
+        currentSize += messageText.length;
+    }
+
+    if (currentPage.length > 0) {
+        pages.push(currentPage);
+    }
+
+    return pages;
+}
+
+function getPresentSituation(chat, presentSituationSize) {
+    let presentSituation = '';
+    for (let i = chat.length - 1; i >= 0; i--) {
+        const message = chat[i];
+        const messageText = `${message.name}: ${message.mes}\n`;
+        if (presentSituation.length + messageText.length > presentSituationSize) {
+            break;
+        }
+        presentSituation = messageText + presentSituation;
+    }
+    return presentSituation;
+}
+
+async function summarizePage(page, presentSituation, settings) {
+    const { apiUrl, apiKey, summarizeModel } = settings;
+
+    if (!apiKey) {
+        toastr.error('Dynamic Memory: API key is not set. Please set it in the extension settings.');
+        console.error('Dynamic Memory: API key is not set.');
+        return null;
+    }
+
+    const prompt = `Present Situation:\n${presentSituation}\n\nMemory:\n${page}\n\nBased on the present situation, what details from the memory are relevant? Be brief. If nothing is relevant, respond with a blank message.`;
+
+    try {
+        const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`,
+                'HTTP-Referer': 'https://sillytavern.app', // Or your app's URL
+                'X-Title': 'SillyTavern' // Or your app's name
+            },
+            body: JSON.stringify({
+                model: summarizeModel,
+                messages: [{ role: 'user', content: prompt }]
+            })
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            toastr.error(`Dynamic Memory: API request failed with status ${response.status}. See console for details.`);
+            console.error(`Dynamic Memory: API request failed with status ${response.status}`);
+            console.error('Error details:', errorText);
+            return null;
+        }
+
+        const data = await response.json();
+        if (!data.choices || data.choices.length === 0) {
+            toastr.error('Dynamic Memory: Invalid API response. See console for details.');
+            console.error('Dynamic Memory: Invalid API response', data);
+            return null;
+        }
+        return data.choices[0].message.content.trim();
+    } catch (error) {
+        toastr.error('Dynamic Memory: Error during API call. See console for details.');
+        console.error('Dynamic Memory: Error during API call', error);
+        return null;
+    }
+}
+
+// Create the settings UI
+function onSettingsChange() {
+    const settings = getSettings();
+    // Update UI elements if needed
+}
+
+function createSettingsUI() {
+    const settingsHtml = `
+        <div class="dynamic-memory-settings">
+            <h2>Dynamic Memory Settings</h2>
+            <div class="inline-drawer">
+                <p>This extension summarizes the chat history and injects it into the context. This can help the AI remember important details from long conversations.</p>
+            </div>
+
+            <label for="dm-enabled">Enabled</label>
+            <input type="checkbox" id="dm-enabled" ${getSettings().enabled ? 'checked' : ''}>
+
+            <label for="dm-page-size" title="The maximum number of characters per page.">Page Size (characters)</label>
+            <input type="number" id="dm-page-size" value="${getSettings().pageSize}" placeholder="e.g., 2000">
+
+            <label for="dm-present-situation-size" title="The number of recent characters to use as the 'present situation'.">Present Situation Size (characters)</label>
+            <input type="number" id="dm-present-situation-size" value="${getSettings().presentSituationSize}" placeholder="e.g., 1000">
+
+            <label for="dm-api-url" title="The API endpoint for the summarization service (e.g., OpenRouter).">API URL</label>
+            <input type="text" id="dm-api-url" value="${getSettings().apiUrl}" placeholder="https://openrouter.ai/api/v1/chat/completions">
+
+            <label for="dm-summarize-model" title="The model to use for summarization.">Summarizer Model</label>
+            <input type="text" id="dm-summarize-model" value="${getSettings().summarizeModel}" placeholder="openai/gpt-3.5-turbo">
+
+            <label for="dm-api-key" title="Your API key for the summarization service.">API Key</label>
+            <input type="password" id="dm-api-key" value="${getSettings().apiKey}" placeholder="sk-...">
+            <small>Your API key is stored in plain text. Use a dedicated key for this extension and revoke it if you no longer use it.</small>
+
+            <button id="dm-save-settings" class="primary-button">Save Settings</button>
+
+            <h3>Dynamic Memory</h3>
+            <div id="dm-memory-view" class="draggable-handle"></div>
+        </div>
+    `;
+
+    $('#extensions_settings').append(settingsHtml);
+
+    $('#dm-save-settings').on('click', () => {
+        const settings = getSettings();
+        settings.enabled = $('#dm-enabled').is(':checked');
+        settings.pageSize = parseInt($('#dm-page-size').val());
+        settings.presentSituationSize = parseInt($('#dm-present-situation-size').val());
+        settings.apiUrl = $('#dm-api-url').val();
+        settings.summarizeModel = $('#dm-summarize-model').val();
+        settings.apiKey = $('#dm-api-key').val();
+        saveSettingsDebounced();
+        toastr.success('Dynamic Memory settings saved!');
+    });
+
+    // Update memory view
+    setInterval(() => {
+        const memoryView = $('#dm-memory-view');
+        if (memoryView) {
+            memoryView.html(dynamicMemory.join('<br>'));
+        }
+    }, 2000);
+}
+
+// Function to initialize the extension
+function initialize() {
+    // Add the settings UI
+    createSettingsUI();
+
+    // Log a message to indicate the extension is loaded
+    console.log('Dynamic Memory extension loaded.');
+}
+
+// Wait for the DOM to be ready before initializing the extension
+$(document).ready(() => {
+    // A small delay to ensure other scripts have loaded
+    setTimeout(initialize, 500);
+});
