@@ -114,31 +114,20 @@ globalThis.dynamicMemoryInterceptor = async function(chat, contextSize, abort, t
 };
 
 function paginate(chat, pageSize) {
-    const pages = [];
-    let currentPage = '';
-    let currentSize = 0;
-
+    let fullText = '';
     for (const message of chat) {
-        const messageText = `${message.name}: ${message.mes}\n`;
-
-        if (currentSize + messageText.length > pageSize && currentSize > 0) {
-            // Try to find a newline to split on
-            let splitIndex = currentPage.lastIndexOf('\n');
-            if (splitIndex === -1) {
-                splitIndex = pageSize;
-            }
-
-            pages.push(currentPage.substring(0, splitIndex));
-            currentPage = currentPage.substring(splitIndex + 1);
-            currentSize = currentPage.length;
-        }
-
-        currentPage += messageText;
-        currentSize += messageText.length;
+        fullText += `${message.name}: ${message.mes}\n`;
     }
 
-    if (currentPage.length > 0) {
-        pages.push(currentPage);
+    if (fullText.length === 0) {
+        return [];
+    }
+
+    const pages = [];
+    let startIndex = 0;
+    while (startIndex < fullText.length) {
+        pages.push(fullText.substring(startIndex, startIndex + pageSize));
+        startIndex += pageSize;
     }
 
     return pages;
