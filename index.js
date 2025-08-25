@@ -84,6 +84,9 @@ globalThis.dynamicMemoryInterceptor = async function(chat, contextSize, abort, t
     const presentSituationText = presentChat.map(m => `${m.name}: ${m.mes}`).join('\n');
 
     const summarizedPages = [];
+    if (pages.length > 0) {
+        toastr.info('Dynamic Memory: Summarizing history...');
+    }
     for (const page of pages) {
         const summary = await summarizePage(page, presentSituationText, settings);
         if (summary) {
@@ -110,6 +113,7 @@ globalThis.dynamicMemoryInterceptor = async function(chat, contextSize, abort, t
         chat.push(memoryMessage);
         chat.push(...presentChat);
         console.log('Dynamic Memory: Chat context reconstructed with summary.');
+        toastr.success('Dynamic Memory: Context updated with summary.');
     }
 };
 
