@@ -33,8 +33,15 @@ let dynamicMemory = [];
 // The main interceptor function
 globalThis.dynamicMemoryInterceptor = async function(chat, contextSize, abort, type) {
     const settings = getSettings();
-    if (!settings.enabled || chat.length < 3) { // Don't run on very short chats
+    if (!settings.enabled) {
         return;
+    }
+
+    // New guard clause: only run if the total chat character count is greater than the 'present situation' buffer.
+    // This is more reliable than checking chat.length.
+    const totalCharCount = chat.reduce((sum, msg) => sum + msg.mes.length, 0);
+    if (totalCharCount < settings.presentSituationSize) {
+        return; // Chat is too short to need summarization.
     }
 
     console.log('Dynamic Memory Interceptor triggered');
